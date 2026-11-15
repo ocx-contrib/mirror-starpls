@@ -1,0 +1,134 @@
+## mirror-starpls — the single spec for ocx.sh/starpls/starpls.
+##
+## No mirror-base.yml and no `extends:`: one package, every key is package-owned
+## (same shape as mirror-gohugoio / mirror-astral-sh). A second package would add
+## a sibling directory and only then a base — no generated filename changes.
+
+name: starpls
+
+# Namespace rule 4 (solo tool under a personal handle, `withered-magic`): the
+# tool names itself, so `starpls/starpls`. The physical path's first segment
+# must be this repo's own GitHub owner (GITHUB_TOKEN scope).
+target:
+  registry: ghcr.io
+  repository: ocx-contrib/starpls/starpls
+
+source:
+  type: github_release
+  owner: withered-magic
+  repo: starpls
+  # Bare `vX.Y.Z` on every release (v0.1.0 .. v0.1.22).
+  tag_pattern: "^v(?P<version>\\d+\\.\\d+\\.\\d+)$"
+
+skip_prereleases: true
+cascade: true
+
+# Bare semver, no `+build` segment, so `date` cannot collide with upstream
+# build metadata. Keeps every re-published cascade tag's old digest pinned.
+build_timestamp: date
+
+verify:
+  github_asset_digest: true
+
+concurrency:
+  max_downloads: 8
+  max_bundles: 4
+  max_pushes: 2
+  rate_limit_ms: 100
+  max_retries: 3
+  compression_threads: 0
+
+# `off`: the archives are FLAT — `starpls` (`starpls.exe` on Windows) sits at
+# the archive root, no wrapper directory and no `bin/` (checked on v0.1.10,
+# v0.1.17, v0.1.22, every platform) — so PATH is a bare ${installPath}, which
+# the bin_scan gate rejects at exit 65 under `auto`/`verify`. The one-entry
+# `binaries` list in metadata.json is hand-written from the archive listing.
+bin_scan: off
+
+# Libc evidence (v0.1.22, extracted from the .tar.gz):
+#   $ file starpls   (linux-amd64)
+#   ELF 64-bit LSB pie executable, x86-64, dynamically linked,
+#   interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 2.0.0, stripped
+#   $ file starpls   (linux-aarch64)
+#   ELF 64-bit LSB pie executable, ARM aarch64, dynamically linked,
+#   interpreter /lib/ld-linux-aarch64.so.1, for GNU/Linux 2.0.0, stripped
+#   $ readelf -d starpls | grep NEEDED   (both arches)
+#   libm.so.6 libpthread.so.0 libc.so.6 libdl.so.2   (amd64 + ld-linux-x86-64.so.2)
+#   -> dynamically linked against glibc only, no libstdc++ / libatomic, so
+#      `+libc.glibc`, no alpine leg.
+#   $ readelf -V starpls | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
+#   v0.1.22  amd64 GLIBC_2.17   aarch64 GLIBC_2.17
+#   v0.1.17  amd64 GLIBC_2.28   aarch64 GLIBC_2.28   (v0.1.15/16: 2.28-2.29)
+#   -> every floor is cleared by ubuntu:24.04 and fedora:40.
+# Upstream ships no musl and no windows/arm64 asset in any release (full asset
+# list of all 23 releases checked: linux amd64/aarch64, darwin amd64/arm64,
+# windows amd64 only). Raw binaries (`starpls-<os>-<arch>[.exe]`) are also
+# published alongside the archives; the archives are mirrored — anchored regexes
+# keep the two forms from ever both matching.
+assets:
+  "linux/amd64+libc.glibc":
+    - "^starpls-linux-amd64\\.tar\\.gz$"
+  "linux/arm64+libc.glibc":
+    - "^starpls-linux-aarch64\\.tar\\.gz$"
+  darwin/amd64:
+    - "^starpls-darwin-amd64\\.tar\\.gz$"
+  darwin/arm64:
+    - "^starpls-darwin-arm64\\.tar\\.gz$"
+  windows/amd64:
+    - "^starpls-windows-amd64\\.zip$"
+
+asset_type:
+  type: archive
+  strip_components: 0
+
+metadata:
+  default: metadata.json
+
+catalog:
+  logo: logo.svg
+
+versions:
+  # Archives exist from v0.1.10 and the `version` subcommand (smoke Tier 2)
+  # from v0.1.15, which is the first release with every layout below uniform.
+  min: "0.1.15"
+  new_per_run: 10
+  poll_interval: "1 3-23/6 * * *"
+
+tests:
+  - name: smoke
+    script: starpls/tests/smoke.star
+
+annotations:
+  org.opencontainers.image.licenses: "Apache-2.0"
+
+platforms:
+  "linux/amd64+libc.glibc":
+    runner: ubuntu-latest
+    containers:
+      - { image: "ubuntu:24.04", shell: bash }
+      - { image: "fedora:40",    shell: bash }
+  "linux/arm64+libc.glibc":
+    runner: ubuntu-24.04-arm
+    containers:
+      - { image: "ubuntu:24.04", shell: bash }
+      - { image: "fedora:40",    shell: bash }
+  darwin/amd64:
+    # Intel slice tested under Rosetta 2 on the arm64 macos-15 runner.
+    runner: macos-15
+    # No darwin-amd64 asset before v0.1.17 (checked per release); a window, not
+    # a global versions.min bump.
+    min_version: "0.1.17"
+  darwin/arm64:
+    runner: macos-15
+  windows/amd64:
+    runner: windows-latest
+    shell: pwsh
+
+notify:
+  discord:
+    webhook_secret: OCX_MIRROR_DISCORD_HOOK
+    user_id: "227748867204972545"  # pinged in-message on failures
+
+announce:
+  package: starpls/starpls
+  fork: ocx-contrib/index
